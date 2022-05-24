@@ -1,0 +1,4 @@
+* make path to arcconf binary configurable
+* make path to promfile configurable
+* maybe separate exporter instead of promfile for node exporter
+* maybe separate template file(s)
