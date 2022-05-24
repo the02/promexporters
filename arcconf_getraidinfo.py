@@ -9,14 +9,14 @@ import grp
 
 p = subprocess.Popen("/usr/local/bin/arcconf GETCONFIG 1".split(" "), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 data = p.stdout.read().decode('utf-8')
-
 collregistry = CollectorRegistry()
 controller_status = Gauge("ARCCONF_Controller_Status", "Status of Controller", ["Controller"], registry=collregistry)
-diskstate = Gauge("ARCCONF_Disk_State", "Status of disk in array", ["logicalarray", "devserial"], registry=collregistry)
+diskstate = Gauge("ARCCONF_Disk_State", "Status of disk in array", ["logicalarray", "segment", "devserial"], registry=collregistry)
 controller_temp = Gauge("ARCCONF_Controller_Temperature", "Temperature of Controller", ["Controller", "Sensor"], registry=collregistry)
 controller_arrays = Gauge("ARCCONF_Controller_Arrays", "Arrays on Controller", ["Controller", "State"], registry=collregistry)
 controllerID = 1
-enum = {'Present': 1, 'Missing': 0, "Optimal": 1}
+
+enum = {'Present': -1, 'Missing': -2, "Optimal": 1, "Rebuilding": -4, "Inconsistent": -3}
 
 init_template = """
 Controllers found: 1{{ ignore(".*") }}
@@ -62,13 +62,17 @@ Controller information{{ ignore(".*") }}
 Logical Device number {{ ldnr }}
    Device Type{{ ignore(".*") }}
    Array Physical Device Information{{ ignore(".*") }}
-<group name="logicaldevice">
+<group name="logicaldevice" method="table">
+   Device {{ segnr }}{{ ignore("\\s*") }}: {{ segstate }}
    Device {{ segnr }}{{ ignore("\\s*") }}: {{ segstate }} ({{ sizemb }}MB,{{ ignore(".*") }} Enclosure:{{ encnr }}, Slot:{{ slotnr }}){{ ignore("\\s*") }}{{ serial }}
 </group>
 Physical Device information{{ ignore(".*") }}
 </group>
 """,
     'Adaptec ASR8405': """
+<vars>
+default_values = {"serial": "invalid"}
+</vars>
 <group name="Controller">
 ----------------------------------------------------------------------{{ ignore(".*") }}
 Controller information{{ ignore(".*") }}
@@ -77,19 +81,29 @@ Controller information{{ ignore(".*") }}
 </group>
 <group name="LD">
 Logical Device number {{ ldnr }}
-<group name="logicaldevice">
-   Segment {{ segnr }}{{ ignore("\\s*") }}: {{ segstate }} ({{ sizemb }}MB, {{ ignore(".*") }} Enclosure:{{ encnr }}, Slot:{{ slotnr }}){{ ignore("\\s*") }}{{ serial }}
+<group name="logicaldevice" method="table">
+   Segment {{ segnr }}{{ ignore("\\s*") }}: {{ segstate }}{{ ignore("\\s*") }}{{ addinfo | re("\(.*\)") }}{{ ignore("\\s*") }}{{ serial }}
+   Segment {{ segnr }}{{ ignore("\\s*") }}: {{ segstate }}{{ ignore(".*") }}
+</group>
 </group>
 Physical Device information{{ ignore(".*") }}
+<group name="PD">
+      Device #{{ pdnr }}
+         State{{ ignore("\\s+") }}: {{ pdstate }}
+         Serial number{{ ignore("\\s+") }}: {{ pdserial }}
+            Attached PHY Identifier{{ ignore("\\s+") }}: {{ pdphy }}
 </group>
 """
 }
+# ic(m[0][0]['controllermodel'])
 parser = ttp(data=data, template=templates[m[0][0]['controllermodel']])
 parser.parse()
 o = parser.result()
-promfile = '/tmp/arcconf.prom'
+promfile = '/home/prometheus/data/arcconf.prom'
 
 
+drives = []
+# ic(o[0])
 for x in o[0]:
     if 'Controller_temp' in x.keys():
         for c in x['Controller_temp']:
@@ -110,6 +124,20 @@ for x in o[0]:
     if 'LD' in x.keys():
         if 'logicaldevice' in x['LD'].keys():
             for ld in x['LD']['logicaldevice']:
-                diskstate.labels(x['LD']['ldnr'], ld['serial']).set(enum[ld['segstate']])
+                if ld['segstate'] == 'Data':
+                    continue
+                if 'serial' not in ld.keys():
+                    ld['serial'] = 'invalid'
+                if ld['serial'] not in drives:
+                    drives.append(ld['serial'])
+                diskstate.labels(x['LD']['ldnr'], ld['segnr'], ld['serial']).set(enum[ld['segstate']])
+#    if 'PD' in x.keys():
+#
+#        for pd in x['PD']:
+#
+#            if 'pdserial' in pd and pd['pdserial'] not in drives:
+#                # ic(pd)
+#                #drives.append(pd['pdserial'])
+#                #diskstate.labels(x['LD']['ldnr'],int(pd['pdphy'])-1, pd['pdserial']).set(enum['Missing'])
 write_to_textfile(promfile, collregistry)
 chown(promfile, pwd.getpwnam('prometheus').pw_uid, grp.getgrnam('prometheus').gr_gid)
