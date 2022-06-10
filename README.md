@@ -7,6 +7,6 @@ Currently tested and working for the following models
 
 # slave status exporter
 
-requires a user that can read slave status
-fetches socket files from /var/run/mysqld
-in case of backups from slave, backup script should create and remove a <socket>.backup file in /var/run/mysqld to show that backup is running on instance
+* requires a user that can read slave status
+* fetches socket files from /var/run/mysqld
+* in case of backups from slave, backup script should create and remove a <socket>.backup file in /var/run/mysqld to show that backup is running on instance
